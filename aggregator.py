@@ -1,6 +1,8 @@
 import logging
 from time import time
 from checks.metric_types import MetricTypes
+import math
+import string
 
 log = logging.getLogger(__name__)
 
@@ -218,7 +220,7 @@ class Histogram(Metric):
         self.name = name
         self.count = 0
         self.samples = []
-        self.percentiles = [0.95]
+        self.percentiles = [90, 95, 99, 99.5]
         self.tags = tags
         self.hostname = hostname
         self.device_name = device_name
@@ -258,10 +260,10 @@ class Histogram(Metric):
                 interval=interval,
             ) for suffix, value, metric_type in metric_aggrs
         ]
-
-        for p in self.percentiles:
-            val = self.samples[int(round(p * length - 1))]
-            name = '%s.%spercentile' % (self.name, int(p * 100))
+        vals = self.percentile(self.samples, self.percentiles)
+        index=0
+        for val in vals:
+            name = '%s.%spercentile' % (self.name, string.replace(str(self.percentiles[index]), ".", "_"))
             metrics.append(self.formatter(
                 hostname=self.hostname,
                 tags=self.tags,
@@ -271,6 +273,7 @@ class Histogram(Metric):
                 metric_type=MetricTypes.GAUGE,
                 interval=interval,
             ))
+            index = index+1
 
         # Reset our state.
         self.samples = []
@@ -278,6 +281,22 @@ class Histogram(Metric):
 
         return metrics
 
+    ### Percentile based on Microsoft Excel (!) method. Its an alternative to the NIST algorithm and
+    ### works well on small data sets too ( http://en.wikipedia.org/wiki/Percentile )
+    def percentile(self, values, percentile_list):
+
+        def calc_percentile(values, perc):
+            N = len(values)
+            rank = round((perc/100.0) * (len(values) - 1) + 1,1)
+            [d,k] = math.modf(rank)
+            k_int = int(k)
+            if k_int == 0:
+                return values[0]
+            elif k_int >= N:
+                return values[N - 1]
+            else:
+                return values[k_int - 1] + d * (values[k_int] - values[k_int - 1])
+        return [calc_percentile(values, perc) for perc in percentile_list]
 
 class Set(Metric):
     """ A metric to track the number of unique elements in a set. """
